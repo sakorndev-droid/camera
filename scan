@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PMcamera - QR Scanner</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://unpkg.com/html5-qrcode"></script>
+    <style>
+        body {
+            background-color: #f8f9fa;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        #reader {
+            width: 100%;
+            max-width: 500px;
+            margin: 0 auto;
+            border-radius: 15px;
+            overflow: hidden;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            background: #fff;
+        }
+        /* ปรับแต่งปุ่มและอินเตอร์เฟสของตัวสแกนให้สวยงามขึ้น */
+        #reader button {
+            background-color: #0d6efd;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 20px;
+            margin: 5px;
+            font-size: 14px;
+        }
+        #reader button:hover {
+            background-color: #0b5ed7;
+        }
+        #reader select {
+            padding: 6px 12px;
+            border-radius: 8px;
+            border: 1px solid #ced4da;
+            margin: 5px;
+        }
+        .scanned-log {
+            max-height: 150px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container text-center py-4">
+    <div class="card shadow-sm p-3 mb-4 bg-white rounded" style="max-width: 500px; margin: 0 auto;">
+        <h4 class="fw-bold text-primary mb-2">📸 เครื่องสแกน QR Code เช็คชื่อ</h4>
+        <p class="text-muted small">เปิดทำงานร่วมกับระบบหลัก — สแกนแล้วจะติ๊กสถานะ "มา" ให้ทันที</p>
+        
+        <div id="reader" class="mb-3"></div>
+        
+        <div id="scan-status" class="alert alert-secondary py-2 m-0 small fw-bold">
+            📷 กำลังรอเปิดกล้อง...
+        </div>
+    </div>
+
+    <div class="card p-3" style="max-width: 500px; margin: 0 auto;">
+        <h6 class="text-start fw-bold text-secondary">ประวัติการสแกนล่าสุด (หน้านี้):</h6>
+        <div id="log-list" class="list-group scanned-log text-start small">
+            <div class="text-muted text-center py-2">ยังไม่มีการสแกน</div>
+        </div>
+    </div>
+</div>
+
+<script>
+    function playBeep() {
+        try {
+            const ctx = new (window.AudioContext || window.webkitAudioContext)();
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = "sine";
+            osc.frequency.setValueAtTime(1000, ctx.currentTime); // ความถี่เสียง 1000Hz (เสียงติ๊ดชัดๆ)
+            gain.gain.setValueAtTime(0.2, ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.00001, ctx.currentTime + 0.15);
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.start();
+            osc.stop(ctx.currentTime + 0.15);
+        } catch (e) {
+            console.log("ไม่สามารถเล่นเสียงได้เนื่องจากนโยบายเบราว์เซอร์:", e);
+        }
+    }
+</script>
+
+<script>
+    let lastScannedCode = "";
+    let lastScannedTime = 0;
+    const DEBOUNCE_TIME = 2500; // 🛑 ป้องกันการสแกนซ้ำคนเดิมภายใน 2.5 วินาที
+
+    function onScanSuccess(decodedText, decodedResult) {
+        const currentTime = new Date().getTime();
+        const cleanText = String(decodedText).trim();
+
+        // ตรวจสอบว่าเป็นรหัสเดิมที่เพิ่งสแกนไปเมื่อกี้หรือไม่
+        if (cleanText === lastScannedCode && (currentTime - lastScannedTime) < DEBOUNCE_TIME) {
+            return; // ข้ามการทำงานไปถ้าซ้ำเร็วเกินไป
+        }
+
+        // อัปเดตเวลาและรหัสล่าสุดที่สแกน
+        lastScannedCode = cleanText;
+        lastScannedTime = currentTime;
+
+        // 🔊 เล่นเสียง บี๊บ!
+        playBeep();
+
+        // 🟢 แสดงสถานะบนหน้าจอชั่วคราว
+        const statusEl = document.getElementById("scan-status");
+        statusEl.className = "alert alert-success py-2 m-0 small fw-bold";
+        statusEl.innerText = `ส่งข้อมูลสำเร็จ: ${cleanText}`;
+
+        // 📝 เพิ่มลงในประวัติการสแกนด้านล่างหน้าเว็บ
+        const logList = document.getElementById("log-list");
+        if (logList.innerHTML.includes("ยังไม่มีการสแกน")) logList.innerHTML = "";
+        
+        const now = new Date().toLocaleTimeString();
+        logList.innerHTML = `<div class="list-group-item list-group-item-success d-flex justify-content-between py-1">
+                                <span>ID: <strong>${cleanText}</strong></span>
+                                <span class="text-muted text-end">${now}</span>
+                             </div>` + logList.innerHTML;
+
+        // 🚀 [หัวใจสำคัญ] ส่งข้อมูลกลับไปยังหน้าต่างหลัก (Google Apps Script)
+        if (window.opener) {
+            window.opener.postMessage(cleanText, "*");
+        } else {
+            // แจ้งเตือนกรณีเปิดหน้านี้ขึ้นมาเดี่ยวๆ โดยไม่ได้กดมาจากหน้าเช็คชื่อหลัก
+            statusEl.className = "alert alert-danger py-2 m-0 small";
+            statusEl.innerText = `❌ ไม่พบหน้าต่างหลัก (กรุณาเปิดจากระบบเช็คชื่อ)`;
+        }
+
+        // รีเซ็ตสีสถานะกลับเป็นปกติหลังจาก 1.5 วินาที
+        setTimeout(() => {
+            if (document.getElementById("scan-status").innerText.includes(cleanText)) {
+                document.getElementById("scan-status").className = "alert alert-info py-2 m-0 small";
+                document.getElementById("scan-status").innerText = "⏳ พร้อมสแกนรหัสถัดไป...";
+            }
+        }, 1500);
+    }
+
+    function onScanFailure(error) {
+        // ฟังก์ชั่นนี้จะทำงานตลอดเวลาที่กล้องพยายามหารหัส QR (สามารถปล่อยว่างไว้ได้เพื่อไม่ให้ Log รก)
+    }
+
+    // เริ่มต้นระบบกล้องสแกนเมื่อโหลดหน้าเว็บเสร็จ
+    window.addEventListener('DOMContentLoaded', (event) => {
+        const html5QrcodeScanner = new Html5QrcodeScanner(
+            "reader", 
+            { 
+                fps: 15,          // ความเร็วในการจับภาพ (15 เฟรมต่อวินาที กำลังดีไม่กินทรัพยากรเครื่อง)
+                qrbox: { width: 250, height: 250 }, // ขนาดกรอบสแกนบนหน้าจอ
+                rememberLastUsedCamera: true,        // ให้จำกล้องตัวล่าสุดที่เลือกใช้ (เช่น กล้องหลัง)
+                supportedScanTypes: [Html5QrcodeScanType.SCAN_TYPE_CAMERA] // เน้นเปิดสแกนผ่านกล้องถ่ายรูป
+            },
+            /* verbose= */ false
+        );
+        html5QrcodeScanner.render(onScanSuccess, onScanFailure);
+    });
+</script>
+
+</body>
+</html>
